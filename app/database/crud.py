@@ -44,3 +44,8 @@ def find_closest_matches(db, embeddings: List[List[float]]) -> List[Tuple[Person
                 results.append((Person(id=0, name="Unknown"), 0))
 
         return results
+
+
+def find_closest_match_single_face(db, embeddings: List[float]) -> Tuple[Person, float]:
+    closest_match = find_closest_matches(db, [embeddings])
+    return closest_match[0]

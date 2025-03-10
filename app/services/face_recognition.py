@@ -24,8 +24,7 @@ class FaceRecognitionService:
 
     def identify(self, image: np.ndarray) -> List[List[float]]:
         """
-        Generates an embedding vector from the given image file for identification.
-        Raises HTTPException if no face or multiple faces are detected.
+        Generates an embedding vector/s from the given image file for identification.
         """
         faces = self.face_analysis_model.get(image)
         embeddings = []
@@ -33,3 +32,17 @@ class FaceRecognitionService:
             embeddings.append(face.embedding.tolist())
 
         return embeddings
+    
+    def identifySingleFace(self, image: np.ndarray) -> List[List[float]]:
+        """
+        Generates an embedding vector from the given image file for identification.
+        Raises HTTPException if no face or multiple faces are detected.
+        """
+        faces = self.face_analysis_model.get(image)
+        embeddings = []
+        if (len(faces) > 1):
+            raise HTTPException(status_code=400, detail="More than one face detected. Please upload an image with exactly one face.")
+        if len(faces) < 1:
+            raise HTTPException(status_code=400, detail="No face detected. Please upload an image with a clear face.")
+        
+        return faces[0].embedding.tolist()

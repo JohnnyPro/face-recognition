@@ -17,4 +17,7 @@ class IdentifyRequest(BaseModel):
     image: UploadFile = File(...)
 
 class IdentifyResponse(BaseModel):
-    matches: List[Tuple[Person, float]]  # List of (Person, confidence) tuples
+    matches: List[Tuple[Person, float]] 
+    
+class IdentifySinglePersonResponse(BaseModel):
+    matches: Tuple[Person, float] 
