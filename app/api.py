@@ -8,21 +8,21 @@ from app.services.face_recognition import FaceRecognitionService
 import cv2
 import numpy as np
 import os
+from typing import Tuple
+
 
 router = APIRouter()
 
 
-@router.post("/embed", response_model=EmbedResponse)
+@router.post("/embed", response_model=str)
 async def embed_face(
-    name: str = Form("required"),
+    person_id: str = Form(...),
     image: UploadFile = File(...),
     db=Depends(get_db),
     face_service: FaceRecognitionService = Depends(
         get_face_recognition_service)
 ):
-    if name == "required":
-        raise HTTPException(
-                status_code=400, detail="Name required.")
+    
     # Validate that the uploaded file is an image
     validate_image_file(image)
 
@@ -43,18 +43,18 @@ async def embed_face(
             status_code=500, detail=f"Error generating embedding: {str(e)}")
 
     # Create a new person
-    person = create_person(db, name)
-    if not person:
-        raise HTTPException(status_code=500, detail="Failed to create person")
+    # person = create_person(db, person_id)
+    # if not person:
+    #     raise HTTPException(status_code=500, detail="Failed to create person")
 
     # Save the embedding
     try:
-        save_embedding(db, person.id, embedding)
+        save_embedding(db, person_id, embedding)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to save embedding: {str(e)}")
 
-    return EmbedResponse(person=person)
+    return person_id
 
 
 @router.post("/identify", response_model=IdentifyResponse)
@@ -91,7 +91,7 @@ async def identify_faces(
 
     return IdentifyResponse(matches=matches)
 
-@router.post("/identify-face", response_model=IdentifySinglePersonResponse)
+@router.post("/identify-face", response_model=Tuple[str, float] )
 async def identifySingleFace(
     image: UploadFile = File(...),
     db=Depends(get_db),
@@ -118,9 +118,10 @@ async def identifySingleFace(
             status_code=500, detail=f"Error generating embedding: {str(e)}")
 
     try:
-        matches = find_closest_match_single_face(db, identified_embedding)
+        match = find_closest_match_single_face(db, identified_embedding)
+        print(match)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to identify face: {str(e)}")
 
-    return IdentifySinglePersonResponse(matches=matches)
+    return match
