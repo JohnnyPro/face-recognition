@@ -1,0 +1,8 @@
+numpy==1.26.2
+insightface==0.7.3
+psycopg2-binary==2.9.10
+opencv-python==4.11.0.86
+onnxruntime==1.21.0
+uvicorn==0.34.0
+fastapi==0.115.11
+python-multipart==0.0.20
