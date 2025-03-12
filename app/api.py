@@ -22,7 +22,7 @@ async def embed_face(
     face_service: FaceRecognitionService = Depends(
         get_face_recognition_service)
 ):
-    
+
     # Validate that the uploaded file is an image
     validate_image_file(image)
 
@@ -91,7 +91,8 @@ async def identify_faces(
 
     return IdentifyResponse(matches=matches)
 
-@router.post("/identify-face", response_model=Tuple[str, float] )
+
+@router.post("/identify-face", response_model=Tuple[str, float])
 async def identifySingleFace(
     image: UploadFile = File(...),
     db=Depends(get_db),
@@ -100,7 +101,7 @@ async def identifySingleFace(
 ):
     # Validate that the uploaded file is an image
     validate_image_file(image)
-
+    print("Here")
     try:
         image_data = await image.read()
 
