@@ -101,7 +101,6 @@ async def identifySingleFace(
 ):
     # Validate that the uploaded file is an image
     validate_image_file(image)
-    print("Here")
     try:
         image_data = await image.read()
 
