@@ -1,5 +1,10 @@
 onnx==1.17.0
-onnxruntime-gpu==1.19.2
+onnxruntime==1.21.0
 opencv-python==4.11.0.86
 insightface==0.7.3
 numpy==1.26.2
+fastapi
+uvicorn
+psycopg2-binary
+python-multipart
+python-dotenv

@@ -7,7 +7,7 @@ import logging
 DB_NAME = "face_recognition"
 DB_USER = "postgres"
 DB_PASSWORD = "postgress"
-DB_HOST = "localhost"
+DB_HOST = "postgres_db"
 DB_PORT = "5432"
 
 logging.basicConfig(level=logging.INFO)
