@@ -21,11 +21,11 @@ initialize_database()
 
 def get_db():
     db = psycopg2.connect(
-        dbname=os.getenv("POSTGRES_DB", "face_recognition"),
-        user=os.getenv("POSTGRES_USER", "postgres"),
-        password=os.getenv("POSTGRES_PASSWORD", "postgress"),
-        host=os.getenv("POSTGRES_HOST", "db"),
-        port=os.getenv("POSTGRES_PORT", "5432"),
+        dbname=os.getenv("DATABASE_NAME", "face_recognition"),
+        user=os.getenv("DATABASE_USERNAME", "postgres"),
+        password=os.getenv("DATABASE_PASSWORD", "postgress"),
+        host=os.getenv("DATABASE_HOST", "db"),
+        port=os.getenv("DATABASE_PORT", "5432"),
         cursor_factory=RealDictCursor
     )
     try:
