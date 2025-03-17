@@ -22,14 +22,6 @@ def save_embedding(db, person_id: int, embedding: List[float]):
 
 def find_closest_matches(db, embeddings: List[List[float]]) -> List[Tuple[str, float]]:
     query = """
-        SELECT p.id, p.name, f.embedding <=> %s::vector AS distance
-        FROM people p
-        JOIN embeddings f ON p.id = f.person_id
-        WHERE f.embedding <=> %s::vector < %s
-        ORDER BY distance
-        LIMIT 1;
-    """
-    query = """
         SELECT person_id, embedding <=> %s::vector AS distance
         FROM embeddings WHERE embedding <=> %s::vector < %s
         ORDER BY distance

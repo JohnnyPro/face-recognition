@@ -2,13 +2,18 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from psycopg2.errors import DuplicateDatabase, DuplicateTable
 import logging
+import os
+from dotenv import load_dotenv
 
-# Database configuration
-DB_NAME = "face_recognition"
-DB_USER = "postgres"
-DB_PASSWORD = "postgress"
-DB_HOST = "postgres_db"
-DB_PORT = "5432"
+# Load environment variables from .env file
+load_dotenv()
+
+# Retrieve environment variables
+db_username = os.getenv('DATABASE_USERNAME')
+db_password = os.getenv('DATABASE_PASSWORD')
+db_host = os.getenv('DATABASE_HOST')
+db_port = os.getenv('DATABASE_PORT')
+db_name = os.getenv('DATABASE_NAME')
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,27 +23,27 @@ def create_database():
     """Ensure the database exists before proceeding."""
     try:
         conn = psycopg2.connect(
-            dbname="postgres", user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT
+            dbname=db_name, user=db_username, password=db_password, host=db_host, port=db_port
         )
         conn.autocommit = True
         cursor = conn.cursor()
 
         # Check if the database already exists
         cursor.execute(
-            f"SELECT 1 FROM pg_database WHERE datname = '{DB_NAME}'")
+            f"SELECT 1 FROM pg_database WHERE datname = '{db_name}'")
         exists = cursor.fetchone()
 
         if not exists:
-            logger.info(f"Creating database: {DB_NAME}")
-            cursor.execute(f"CREATE DATABASE {DB_NAME}")
+            logger.info(f"Creating database: {db_name}")
+            cursor.execute(f"CREATE DATABASE {db_name}")
         else:
-            logger.info(f"Database '{DB_NAME}' already exists.")
+            logger.info(f"Database '{db_name}' already exists.")
 
         cursor.execute("CREATE EXTENSION IF NOT EXISTS vector;")
         cursor.close()
         conn.close()
     except DuplicateDatabase:
-        logger.info(f"Database '{DB_NAME}' already exists.")
+        logger.info(f"Database '{db_name}' already exists.")
     except Exception as e:
         logger.error(f"Error creating database: {e}")
         raise
@@ -48,7 +53,7 @@ def setup_tables():
     """Ensure required tables exist."""
     try:
         conn = psycopg2.connect(
-            dbname=DB_NAME, user=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT
+            dbname=db_name, user=db_username, password=db_password, host=db_host, port=db_port
         )
         cursor = conn.cursor()
 
