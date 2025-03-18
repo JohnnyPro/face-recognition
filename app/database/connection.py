@@ -1,3 +1,4 @@
+import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
 from fastapi import Depends
@@ -20,11 +21,11 @@ initialize_database()
 
 def get_db():
     db = psycopg2.connect(
-        dbname=db_name,
-        user=db_username,
-        password=db_password,
-        host=db_host,
-        port=db_port,
+        dbname=os.getenv("DATABASE_NAME", "face_recognition"),
+        user=os.getenv("DATABASE_USERNAME", "postgres"),
+        password=os.getenv("DATABASE_PASSWORD", "postgress"),
+        host=os.getenv("DATABASE_HOST", "db"),
+        port=os.getenv("DATABASE_PORT", "5432"),
         cursor_factory=RealDictCursor
     )
     try:
