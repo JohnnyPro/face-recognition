@@ -1,6 +1,7 @@
 from pydantic import BaseModel
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from fastapi import UploadFile, File
+
 
 class Person(BaseModel):
     id: int
@@ -16,8 +17,16 @@ class EmbedResponse(BaseModel):
 class IdentifyRequest(BaseModel):
     image: UploadFile = File(...)
 
+class Match(BaseModel):
+    person_id: str
+    confidence: Optional[float] = None
+    bbox: Optional[List[float]] = None
+
 class IdentifyResponse(BaseModel):
-    matches: List[Tuple[Person, float]] 
+    matches: List[Match]
+    face_detected: bool
+
     
-class IdentifySinglePersonResponse(BaseModel):
-    matches: Tuple[Person, float] 
+class Face(BaseModel):
+    bbox: List[float]
+    embeddings: List[float]
