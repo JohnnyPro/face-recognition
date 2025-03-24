@@ -3,10 +3,6 @@ from psycopg2.extras import RealDictCursor
 from psycopg2.errors import DuplicateDatabase, DuplicateTable
 import logging
 import os
-from dotenv import load_dotenv
-
-# Load environment variables from .env file
-load_dotenv()
 
 # Retrieve environment variables
 db_username = os.getenv('DATABASE_USERNAME')
