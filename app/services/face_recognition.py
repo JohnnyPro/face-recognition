@@ -12,7 +12,6 @@ class FaceRecognitionService:
         Generates an embedding vector from the given image file.
         Raises HTTPException if no face or multiple faces are detected.
         """
-        print(image.shape)
         faces = self.face_analysis_model.get(image)
         if len(faces) > 1:
             raise HTTPException(
