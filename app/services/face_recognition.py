@@ -1,5 +1,6 @@
 from fastapi import HTTPException, UploadFile
-from typing import List
+from typing import List, Optional
+from app.models.schemas import Face
 import numpy as np
 
 
@@ -12,7 +13,6 @@ class FaceRecognitionService:
         Generates an embedding vector from the given image file.
         Raises HTTPException if no face or multiple faces are detected.
         """
-        print(image.shape)
         faces = self.face_analysis_model.get(image)
         if len(faces) > 1:
             raise HTTPException(
@@ -23,18 +23,18 @@ class FaceRecognitionService:
 
         return faces[0].embedding.tolist()
 
-    def identify(self, image: np.ndarray) -> List[List[float]]:
+    def identify(self, image: np.ndarray) -> List[Face]:
         """
         Generates an embedding vector/s from the given image file for identification.
         """
         faces = self.face_analysis_model.get(image)
-        embeddings = []
+        identified_faces = []
         for face in faces:
-            embeddings.append(face.embedding.tolist())
+            identified_faces.append(Face(bbox=face.bbox.tolist(), embeddings=face.embedding.tolist() ))
 
-        return embeddings
+        return identified_faces
 
-    def identifySingleFace(self, image: np.ndarray) -> List[float]:
+    def identifySingleFace(self, image: np.ndarray) -> Optional[Face]:
         """
         Generates an embedding vector from the given image file for identification.
         Raises HTTPException if no face or multiple faces are detected.
@@ -42,8 +42,7 @@ class FaceRecognitionService:
         faces = self.face_analysis_model.get(image)
 
         if len(faces) < 1:
-            raise HTTPException(
-                status_code=400, detail="No face detected. Please upload an image with a clear face.")
+            return None
 
         image_center = np.array(
             [image.shape[1] / 2, image.shape[0] / 2])
@@ -62,4 +61,4 @@ class FaceRecognitionService:
                 min_distance = distance
                 closest_face = face
 
-        return closest_face.embedding.tolist()
+        return Face(bbox=closest_face.bbox.tolist(), embeddings=closest_face.embedding.tolist()) 
