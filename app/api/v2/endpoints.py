@@ -21,6 +21,7 @@ from app.api.v2.schemas import (
 from app.models.schemas import (
     Match
 )
+from app.api.v2.tracker import SimpleFaceTracker
 
 import logging
 
@@ -99,10 +100,12 @@ async def embed_face(
 async def identify_faces_ws(
     websocket: WebSocket,
     db=Depends(get_db),
-    face_service: FaceRecognitionService = Depends(
-        get_face_recognition_service)
+    face_service: FaceRecognitionService = Depends(get_face_recognition_service)
 ):
     await manager.connect(websocket)
+    
+    # Initialize simple tracker for this connection
+    tracker = SimpleFaceTracker(iou_threshold=0.3, max_missed_frames=30)  # 30 frame tolerance
 
     try:
         while True:
@@ -116,12 +119,10 @@ async def identify_faces_ws(
                     break
 
                 if message.get("action") == "configure":
-                    # Set processing parameters
                     websocket.threshold = message.get("threshold", 0.5)
                     websocket.max_faces = message.get("max_faces", 5)
                     logger.info(
                         f"Configured Face Recognition Module for Threshold: {websocket.threshold} and Maximum Faces: {websocket.max_faces}")
-
                     continue
 
                 image_bytes = base64.b64decode(message["image"])
@@ -135,15 +136,57 @@ async def identify_faces_ws(
                 threshold = getattr(websocket, "threshold", 0.5)
                 max_faces = getattr(websocket, "max_faces", 5)
 
+                # Get matches from current frame (may contain Unknowns)
                 matches = find_closest_matches(
                     db, identified_faces,
                     threshold=threshold,
                     max_results=max_faces
                 )
+                
+                # Get tracked faces from previous frame BEFORE updating
+                previous_tracks = tracker.get_previous_frame_tracks()
+                
+                # Now update tracker with current frame's matches
+                tracker.update_tracks(matches)
+                
+                # Combine results - this is where we use tracking to fill in Unknowns
+                final_matches = []
+                used_track_ids = set()
+                
+                # First process all recognized faces
+                for match in matches:
+                    if match.person_id != "Unknown":
+                        final_matches.append(match)
+                        used_track_ids.add(match.person_id)
+                    else:
+                        # Try to match this Unknown with a previous track
+                        best_track = None
+                        best_iou = 0
+                        
+                        for track in previous_tracks:
+                            iou = SimpleFaceTracker.calculate_iou(track["bbox"], match.bbox)
+                            if iou > best_iou and iou >= 0.3:  # Matching threshold
+                                best_iou = iou
+                                best_track = track
+                        
+                        if best_track:
+                            # Use the tracked identity but with reduced confidence
+                            final_matches.append(Match(
+                                person_id=best_track["person_id"],
+                                confidence=best_track["confidence"]*0.8,
+                                bbox=match.bbox
+                            ))
+                            used_track_ids.add(best_track["person_id"])
+                        else:
+                            # Keep as Unknown if no good track match
+                            final_matches.append(match)
+                
+                # Limit to max_faces and sort by confidence
+                final_matches = sorted(final_matches, key=lambda x: -x.confidence)[:max_faces]
 
                 await manager.send_json(websocket, IdentifyResponseV2(
-                    matches=matches,
-                    face_detected=len(matches) > 0,
+                    matches=final_matches,
+                    face_detected=len(final_matches) > 0,
                     processed_faces=len(identified_faces),
                     status="success"
                 ).dict())
