@@ -20,6 +20,7 @@ class IdentifyResponseV2(BaseModel):
    face_detected: bool
    processed_faces: int
    status: str
+   tracked: Optional[List[str]] = []
    error: Optional[str] = None
 
 class SingleFaceResponse(BaseModel):

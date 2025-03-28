@@ -2,12 +2,78 @@ from fastapi import HTTPException, UploadFile
 from typing import List, Optional
 from app.models.schemas import Face
 import numpy as np
-
+from collections import deque
 
 class FaceRecognitionService:
-    def __init__(self, face_analysis_model):
+    def __init__(self, face_analysis_model, face_mesh):
         self.face_analysis_model = face_analysis_model
+        self.talking_centroids_history = deque(maxlen=150)
+        self.trust_threshold = 0.01  # Maximum variance to consider location trustworthy
+        self.talking_ratio_threshold = 0.25  # Mouth aspect ratio threshold for talking
+        
+        # Initialize MediaPipe Face Mesh
+        self.mp_face_mesh = face_mesh
 
+    def _get_face_center(self, landmarks):
+        """Calculate the center of a face from landmarks"""
+        xs = [lm.x for lm in landmarks.landmark]
+        ys = [lm.y for lm in landmarks.landmark]
+        return np.array([sum(xs)/len(xs), sum(ys)/len(ys)])
+
+    def _calculate_mouth_aspect_ratio(self, landmarks):
+        """Calculate mouth aspect ratio for talking detection"""
+        try:
+            lm13 = landmarks.landmark[13]  # Upper inner lip
+            lm14 = landmarks.landmark[14]  # Lower inner lip
+            lm78 = landmarks.landmark[78]  # Left mouth corner
+            lm308 = landmarks.landmark[308]  # Right mouth corner
+            
+            mouth_height = ((lm13.x - lm14.x)**2 + (lm13.y - lm14.y)**2)**0.5
+            mouth_width = ((lm78.x - lm308.x)**2 + (lm78.y - lm308.y)**2)**0.5
+            return mouth_height / (mouth_width + 1e-6)  # Avoid division by zero
+        except Exception:
+            return 0
+
+    def _update_speaker_tracking(self, frame):
+        """Detect talking faces and update tracking history"""
+        results = self.mp_face_mesh.process(frame)
+        if not results.multi_face_landmarks:
+            return
+            
+        current_talking_centers = []
+        
+        for face_landmarks in results.multi_face_landmarks:
+            ratio = self._calculate_mouth_aspect_ratio(face_landmarks)
+            if ratio > self.talking_ratio_threshold:
+                center = self._get_face_center(face_landmarks)
+                current_talking_centers.append(center)
+        
+        # Store the average of all talking faces in this frame
+        if current_talking_centers:
+            avg_center = np.mean(current_talking_centers, axis=0)
+            self.talking_centroids_history.append(avg_center)
+
+    def get_speaker_location(self):
+        """
+        Returns a dict with:
+        - centroid: (x,y) average position of speaker(s)
+        - is_trustworthy: bool indicating if the location is reliable
+        """
+        if not self.talking_centroids_history:
+            return {'centroid': None, 'is_trustworthy': False}
+            
+        centroids = np.array(self.talking_centroids_history)
+        avg_center = tuple(np.mean(centroids, axis=0))
+        
+        # Calculate variance to determine trustworthiness
+        if len(centroids) < 10:  # Not enough data
+            return {'centroid': avg_center, 'is_trustworthy': False}
+            
+        variance = np.var(centroids, axis=0).mean()
+        is_trustworthy = variance < self.trust_threshold
+        
+        return {'centroid': avg_center, 'is_trustworthy': is_trustworthy}
+    
     def embed(self, image: np.ndarray) -> List[float]:
         """
         Generates an embedding vector from the given image file.
@@ -27,6 +93,8 @@ class FaceRecognitionService:
         """
         Generates an embedding vector/s from the given image file for identification.
         """
+        self._update_speaker_tracking(image)
+        
         faces = self.face_analysis_model.get(image)
         identified_faces = []
         for face in faces:

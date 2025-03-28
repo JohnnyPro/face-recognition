@@ -3,7 +3,7 @@ from collections import deque
 
 
 class SimpleFaceTracker:
-    def __init__(self, iou_threshold=0.3, max_missed_frames=20):  # Increased to 20 frames
+    def __init__(self, iou_threshold=0.45, max_missed_frames=20):  # Increased to 20 frames
         # {track_id: {"person_id": str, "bbox": list, "confidence": float, "missed": int}}
         self.tracked_faces = {}
         self.next_track_id = 0
