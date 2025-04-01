@@ -88,12 +88,13 @@ async def embed_face(
             status_code=500, detail=f"Error generating embedding: {str(e)}")
 
     try:
-        save_embedding(db, person_id, embedding)
+        if (embedding):
+            save_embedding(db, person_id, embedding)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to save embedding: {str(e)}")
 
-    return person_id
+    return person_id if embedding else "Unknown"
 
 
 @router.websocket("/identify")

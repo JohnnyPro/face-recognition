@@ -105,15 +105,34 @@ class FaceRecognitionService:
         Generates an embedding vector from the given image file.
         Raises HTTPException if no face or multiple faces are detected.
         """
+        
         faces = self.face_analysis_model.get(image)
-        if len(faces) > 1:
-            raise HTTPException(
-                status_code=400, detail="More than one face detected. Please upload an image with exactly one face.")
+        embedding_vectors = []
         if len(faces) < 1:
             raise HTTPException(
                 status_code=400, detail="No face detected. Please upload an image with a clear face.")
-
-        return faces[0].embedding.tolist()
+        elif len(faces) > 1:
+            #Lip center
+            speaker_location = self.get_speaker_location()
+            if (speaker_location['is_trustworthy'] and speaker_location['centroid'] != None):
+                lip_x, lip_y = speaker_location['centroid']
+                
+                matching_faces = []
+                for face in faces:
+                    x1, y1, x2, y2 = face.bbox
+                    if (x1 <= lip_x <= x2) and (y1 <= lip_y <= y2):
+                        matching_faces.append(face)
+                
+                if len(matching_faces) == 1:
+                    embedding_vectors = matching_faces[0].embedding.tolist()
+                else:
+                    return None
+            else:
+                return None
+            
+        else:
+            embedding_vectors = faces[0].embedding.tolist()
+        return embedding_vectors
 
     def identify(self, image: np.ndarray) -> List[Face]:
         """
