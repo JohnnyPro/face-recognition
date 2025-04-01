@@ -21,6 +21,7 @@ class IdentifyResponseV2(BaseModel):
    processed_faces: int
    status: str
    tracked: Optional[List[str]] = []
+   lip_center: Optional[List[float]] = []
    error: Optional[str] = None
 
 class SingleFaceResponse(BaseModel):

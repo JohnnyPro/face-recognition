@@ -7,10 +7,12 @@ from collections import deque
 class FaceRecognitionService:
     def __init__(self, face_analysis_model, face_mesh):
         self.face_analysis_model = face_analysis_model
-        self.talking_centroids_history = deque(maxlen=150)
-        self.trust_threshold = 0.01  # Maximum variance to consider location trustworthy
-        self.talking_ratio_threshold = 0.25  # Mouth aspect ratio threshold for talking
-        
+        self.talking_centroids_history = deque(maxlen=90)
+        self.trust_threshold = 0.02  # Maximum variance to consider location trustworthy
+        self.talking_ratio_threshold = 0.12 # Mouth aspect ratio threshold for talking
+        self.w = 100
+        self.h = 100
+        self.noTalkingFramesCounter = 0
         # Initialize MediaPipe Face Mesh
         self.mp_face_mesh = face_mesh
 
@@ -36,8 +38,13 @@ class FaceRecognitionService:
 
     def _update_speaker_tracking(self, frame):
         """Detect talking faces and update tracking history"""
+        self.h, self.w, _ = frame.shape
+        
         results = self.mp_face_mesh.process(frame)
         if not results.multi_face_landmarks:
+            if self.noTalkingFramesCounter > 20 and len(self.talking_centroids_history) > 0:
+                self.talking_centroids_history.clear()
+            self.noTalkingFramesCounter += 1
             return
             
         current_talking_centers = []
@@ -50,8 +57,15 @@ class FaceRecognitionService:
         
         # Store the average of all talking faces in this frame
         if current_talking_centers:
+            self.noTalkingFramesCounter = 0
             avg_center = np.mean(current_talking_centers, axis=0)
             self.talking_centroids_history.append(avg_center)
+        else:
+            if self.noTalkingFramesCounter > 20 and len(self.talking_centroids_history) > 0:
+                self.talking_centroids_history.clear()
+            self.noTalkingFramesCounter += 1
+            
+                
 
     def get_speaker_location(self):
         """
@@ -63,16 +77,28 @@ class FaceRecognitionService:
             return {'centroid': None, 'is_trustworthy': False}
             
         centroids = np.array(self.talking_centroids_history)
-        avg_center = tuple(np.mean(centroids, axis=0))
+        num_frames = len(centroids)
+            # Exponential weighting (higher weight for recent frames)
+        alpha = 0.9  # Weight decay factor, adjust as needed
+        weights = np.array([alpha ** (num_frames - i - 1) for i in range(num_frames)])
+        weights /= weights.sum()  # Normalize weights
+
+        weighted_avg = np.average(centroids, axis=0, weights=weights)
+        weighted_avg = (weighted_avg[0] * self.w, weighted_avg[1] * self.h)
         
         # Calculate variance to determine trustworthiness
-        if len(centroids) < 10:  # Not enough data
-            return {'centroid': avg_center, 'is_trustworthy': False}
-            
-        variance = np.var(centroids, axis=0).mean()
-        is_trustworthy = variance < self.trust_threshold
-        
-        return {'centroid': avg_center, 'is_trustworthy': is_trustworthy}
+        if num_frames < 10:  # Not enough data
+            return {'centroid': weighted_avg, 'is_trustworthy': False}
+
+        variance_x = np.var(centroids[:, 0])
+        variance_y = np.var(centroids[:, 1])
+
+        # Scale variances by width (w) and height (h)
+        scaled_variance_x = variance_x * self.w
+        scaled_variance_y = variance_y * self.h
+        is_trustworthy = variance_x < self.trust_threshold and variance_y < self.trust_threshold*2
+        print(scaled_variance_x, scaled_variance_y)
+        return {'centroid': weighted_avg, 'is_trustworthy': is_trustworthy}
     
     def embed(self, image: np.ndarray) -> List[float]:
         """

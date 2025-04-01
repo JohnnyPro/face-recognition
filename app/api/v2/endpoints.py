@@ -110,7 +110,17 @@ async def identify_faces_ws(
     try:
         while True:
             data = await websocket.receive()
-
+            
+            try:
+                speaker_location = face_service.get_speaker_location()
+                if speaker_location:
+                    print(f"Probable speaker at: {speaker_location}")
+            except Exception as e:
+                await manager.send_json(websocket, {
+                    "status": "error",
+                    "error": f"Connection error: {str(e)}"
+                })
+                manager.disconnect(websocket)
             # Handle configuration message
             if "text" in data:
                 message = json.loads(data["text"])
@@ -194,6 +204,8 @@ async def identify_faces_ws(
                     face_detected=len(final_matches) > 0,
                     processed_faces=len(identified_faces),
                     tracked=only_tracked_ids,
+                    # lip_center=speaker_location["centroid"] if speaker_location["is_trustworthy"] else [],
+                    lip_center=speaker_location["centroid"],
                     status="success"
                 ).dict()
 
