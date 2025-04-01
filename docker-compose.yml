@@ -1,14 +1,14 @@
 version: '3.9'
 
 services:
-  postgres_db:
+  db:
     image: ankane/pgvector:latest
     container_name: face-recognition-postgres_db
     restart: always
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgress
-      POSTGRES_DB: face_recognition_db
+      POSTGRES_DB: face_recognition
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
@@ -25,10 +25,10 @@ services:
     container_name: face-recognition-fastapi_app
     restart: always
     depends_on:
-      postgres_db:
+      db:
         condition: service_healthy
-    environment:
-      DATABASE_URL: postgresql://postgres:mysecretpassword@postgres_db:5432/face_recognition_db
+    env_file: 
+      - .env  # Load environment variables from .env
     ports:
       - "8000:8000"
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
