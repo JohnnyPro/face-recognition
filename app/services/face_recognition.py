@@ -97,9 +97,24 @@ class FaceRecognitionService:
         scaled_variance_x = variance_x * self.w
         scaled_variance_y = variance_y * self.h
         is_trustworthy = variance_x < self.trust_threshold and variance_y < self.trust_threshold*2
-        print(scaled_variance_x, scaled_variance_y)
         return {'centroid': weighted_avg, 'is_trustworthy': is_trustworthy}
     
+    def embed_static(self, image: np.ndarray) -> List[float]:
+        """
+        Generates an embedding vector from the given image file.
+        Raises HTTPException if no face or multiple faces are detected.
+        """
+
+        faces = self.face_analysis_model.get(image)
+        if len(faces) > 1:
+            face = self.getCentralFace(faces, self.w, self.h)
+            return face.embedding.tolist()
+            
+        if len(faces) < 1:
+            raise HTTPException(
+                status_code=400, detail="No face detected. Please upload an image with a clear face.")
+
+        return faces[0].embedding.tolist()
     def embed(self, image: np.ndarray) -> List[float]:
         """
         Generates an embedding vector from the given image file.
@@ -147,6 +162,42 @@ class FaceRecognitionService:
 
         return identified_faces
 
+    def getCentralFace(self, faces: List[Face], image_width: int, image_height: int) -> Optional[Face]:
+        """
+        Get the face closest to the center of the image from a list of faces,
+        weighting horizontal (x-axis) distance twice as much as vertical (y-axis) distance.
+        
+        Args:
+            faces: List of detected faces
+            image_width: Width of the image in pixels
+            image_height: Height of the image in pixels
+            
+        Returns:
+            Face closest to center (with x-axis prioritized 2:1) or None if empty list
+        """
+        if not faces:
+            return None
+            
+        image_center = np.array([image_width / 2, image_height / 2])
+        closest_face = None
+        min_weighted_distance = float('inf')
+        
+        for face in faces:
+            x1, y1, x2, y2 = face.bbox
+            face_center = np.array([(x1 + x2) / 2, (y1 + y2) / 2])
+            
+            # Calculate distances from center
+            dx = abs(face_center[0] - image_center[0])
+            dy = abs(face_center[1] - image_center[1])
+            
+            # Apply 2:1 weighting (x distance matters twice as much)
+            weighted_distance = 2*dx + dy
+            
+            if weighted_distance < min_weighted_distance:
+                min_weighted_distance = weighted_distance
+                closest_face = face
+        
+        return closest_face
     def identifySingleFace(self, image: np.ndarray) -> Optional[Face]:
         """
         Generates an embedding vector from the given image file for identification.

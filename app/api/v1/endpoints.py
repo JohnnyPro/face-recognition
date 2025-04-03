@@ -35,7 +35,7 @@ async def embed_face(
         if decoded_image is None:
             raise HTTPException(
                 status_code=400, detail="Could not decode image.")
-        embedding = face_service.embed(decoded_image)
+        embedding = face_service.embed_static(decoded_image)
     except HTTPException as e:
         raise e
     except Exception as e:
