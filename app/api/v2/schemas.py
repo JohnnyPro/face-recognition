@@ -7,6 +7,13 @@ class EmbedResponseV2(BaseModel):
     embedding_size: int
     status: str
     message: Optional[str] = None
+  
+class SeedResponse(BaseModel):
+    status: str
+    already_seeded: bool
+    person_id: str
+    error: Optional[int] = 0
+    message: Optional[str] = None
 
 class IdentifyResponseV2(BaseModel):
     matches: List[Match]

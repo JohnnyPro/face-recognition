@@ -9,6 +9,18 @@ logger = logging.getLogger(__name__)
 THRESHOLD = 0.5
 
 
+def is_duplicate_seed(db, person_id, embedding) -> bool:
+    logger.info("Checking for duplicate seed...")
+    query = """
+        SELECT COUNT(*) > 0 AS exists
+        FROM embeddings
+        WHERE embedding <=> %s::vector < %s
+          AND person_id = %s;
+    """
+    with db.cursor() as cursor:
+        cursor.execute(query, (embedding, 0.02, person_id))
+        return bool(cursor.fetchone()["exists"])
+
 def has_embedding_conflict(db, person_id, embedding) -> bool:
     query = """
         SELECT COUNT(*) > 0 AS exists
@@ -49,17 +61,19 @@ def update_embedding(db, person_id: int, embedding: List[float], threshold=THRES
         FROM embeddings WHERE embedding <=> %s::vector < %s
         ORDER BY distance;
     """
-    
+
     logger.debug(
         f"Attempting to update embeddings similar to new embedding for person_id {person_id} (threshold: {threshold})")
 
     try:
         with db.cursor() as cursor:
-            cursor.execute(find_matches_query, (embedding, embedding, threshold))
+            cursor.execute(find_matches_query,
+                           (embedding, embedding, threshold))
             matches = cursor.fetchall()
             logger.info("Matches to be updated:")
             for match in matches:
-                logger.info(f"Person ID: {match['person_id']}, Distance: {match['distance']}")         
+                logger.info(
+                    f"Person ID: {match['person_id']}, Distance: {match['distance']}")
         with db.cursor() as cursor:
             params = (person_id, embedding, threshold)
             cursor.execute(query, params)
@@ -75,7 +89,7 @@ def update_embedding(db, person_id: int, embedding: List[float], threshold=THRES
     except Exception as e:
         logger.exception(
             f"Unexpected error while updating similar embeddings for person ID {person_id}: {e}")
-        db.rollback()  
+        db.rollback()
         updated_row_count = -1
 
     return updated_row_count

@@ -13,12 +13,14 @@ from app.database.crud import (
     save_embedding,
     update_embedding,
     has_embedding_conflict,
+    is_duplicate_seed,
     find_closest_matches,
     find_closest_match_single_face
 )
 from app.api.v2.schemas import (
     EmbedResponseV2,
-    IdentifyResponseV2
+    IdentifyResponseV2,
+    SeedResponse
 )
 from app.models.schemas import (
     Match
@@ -105,6 +107,72 @@ async def embed_face(
             status_code=500, detail=f"Failed to save embedding: {str(e)}")
 
     return person_id if embedding else "Unknown"
+
+
+@router.post("/seed", response_model=SeedResponse)
+async def seed_face(
+    person_id: str = Form(...),
+    image: UploadFile = File(...),
+    db=Depends(get_db),
+    face_service: FaceRecognitionService = Depends(
+        get_face_recognition_service)
+):
+
+    # Validate that the uploaded file is an image
+    validate_image_file(image)
+
+    try:
+        image_data = await image.read()
+
+        image_array = np.frombuffer(image_data, np.uint8)
+
+        decoded_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        if decoded_image is None:
+            raise HTTPException(
+                status_code=400, detail="Could not decode image.")
+        embedding = face_service.embed_static(decoded_image)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error generating embedding: {str(e)}")
+
+    response = None
+    try:
+        if embedding:
+            if is_duplicate_seed(db, person_id, embedding):
+                response = SeedResponse(
+                    status="failed",
+                    error=409,
+                    already_seeded=True,
+                    person_id=person_id,
+                    message="Person already seeded.",
+                )
+            elif has_embedding_conflict(db, person_id, embedding):
+                logger.info(f"Updating embedding for Person ID: {person_id}")
+                update_embedding(db, person_id, embedding)
+                response = SeedResponse(
+                    status="success",
+                    already_seeded=False,
+                    person_id=person_id,
+                    message="Updated existing embedding.",
+                )
+            else:
+                logger.info(
+                    f"Creating new embedding for Person ID: {person_id}")
+                save_embedding(db, person_id, embedding)
+                response = SeedResponse(
+                    status="success",
+                    already_seeded=False,
+                    person_id=person_id,
+                    message="Created embedding.",
+                )
+    except Exception as e:
+        logger.info(e)
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save embedding: {str(e)}")
+
+    return response.dict()
 
 
 @router.post("/update", response_model=str)
