@@ -20,7 +20,8 @@ services:
       start_period: 5s
 
   fastapi_app:
-    build: .
+    # build: .
+    image: hanna95/face-recognition-fastapi_app:latest
     container_name: face-recognition-fastapi_app
     restart: always
     depends_on:
