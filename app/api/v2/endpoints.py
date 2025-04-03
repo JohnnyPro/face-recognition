@@ -1,4 +1,4 @@
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Form, File, UploadFile
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Form, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
 import cv2
 import numpy as np
@@ -11,6 +11,8 @@ from app.services.face_recognition import FaceRecognitionService
 from app.utils.image_validation import validate_image_file
 from app.database.crud import (
     save_embedding,
+    update_embedding,
+    has_embedding_conflict,
     find_closest_matches,
     find_closest_match_single_face
 )
@@ -89,7 +91,53 @@ async def embed_face(
 
     try:
         if (embedding):
+            if (has_embedding_conflict(db, person_id, embedding)):
+                logger.error(
+                    f"Embedding Conflict detected for Person ID: {person_id}")
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "detail": f"Face embedding conflicts with existing entry for person: {person_id}"}
+                )
             save_embedding(db, person_id, embedding)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Failed to save embedding: {str(e)}")
+
+    return person_id if embedding else "Unknown"
+
+
+@router.post("/update", response_model=str)
+async def update_face(
+    person_id: str = Form(...),
+    image: UploadFile = File(...),
+    db=Depends(get_db),
+    face_service: FaceRecognitionService = Depends(
+        get_face_recognition_service)
+):
+
+    # Validate that the uploaded file is an image
+    validate_image_file(image)
+
+    try:
+        image_data = await image.read()
+
+        image_array = np.frombuffer(image_data, np.uint8)
+
+        decoded_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+        if decoded_image is None:
+            raise HTTPException(
+                status_code=400, detail="Could not decode image.")
+        embedding = face_service.embed(decoded_image)
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Error generating embedding: {str(e)}")
+
+    try:
+        if (embedding):
+            update_embedding(db, person_id, embedding)
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"Failed to save embedding: {str(e)}")
@@ -101,21 +149,24 @@ async def embed_face(
 async def identify_faces_ws(
     websocket: WebSocket,
     db=Depends(get_db),
-    face_service: FaceRecognitionService = Depends(get_face_recognition_service)
+    face_service: FaceRecognitionService = Depends(
+        get_face_recognition_service)
 ):
     await manager.connect(websocket)
-    
+
     # Initialize simple tracker for this connection
-    tracker = SimpleFaceTracker(iou_threshold=0.45, max_missed_frames=30)  # 30 frame tolerance
+    tracker = SimpleFaceTracker(
+        iou_threshold=0.45, max_missed_frames=30)  # 30 frame tolerance
 
     try:
         while True:
             data = await websocket.receive()
-            
+
             try:
                 speaker_location = face_service.get_speaker_location()
                 if speaker_location:
-                    print(f"Probable speaker at: {speaker_location}")
+                    pass
+                    # print(f"Probable speaker at: {speaker_location}")
             except Exception as e:
                 await manager.send_json(websocket, {
                     "status": "error",
@@ -153,18 +204,18 @@ async def identify_faces_ws(
                     threshold=threshold,
                     max_results=max_faces
                 )
-                
+
                 # Get tracked faces from previous frame BEFORE updating
                 previous_tracks = tracker.get_previous_frame_tracks()
-                
+
                 # Now update tracker with current frame's matches
                 tracker.update_tracks(matches)
-                
+
                 # Combine results - this is where we use tracking to fill in Unknowns
                 final_matches = []
                 used_track_ids = set()
                 only_tracked_ids = set()
-                
+
                 # First process all recognized faces
                 for match in matches:
                     if match.person_id != "Unknown":
@@ -176,7 +227,8 @@ async def identify_faces_ws(
                         best_iou = 0
 
                         for track in previous_tracks:
-                            iou = SimpleFaceTracker.calculate_iou(track["bbox"], match.bbox)
+                            iou = SimpleFaceTracker.calculate_iou(
+                                track["bbox"], match.bbox)
                             if iou > best_iou and iou >= 0.45:  # Matching threshold
                                 best_iou = iou
                                 best_track = track
@@ -194,12 +246,11 @@ async def identify_faces_ws(
                         else:
                             # Keep as Unknown if no good track match
                             final_matches.append(match)
-                            
-                            
 
                 # Limit to max_faces and sort by confidence
                 final_matches = sorted(
                     final_matches, key=lambda x: -x.confidence)[:max_faces]
+                # logger.info(f"Final Matches: {[m.dict() for m in final_matches]}")
                 response = IdentifyResponseV2(
                     matches=final_matches,
                     face_detected=len(final_matches) > 0,
