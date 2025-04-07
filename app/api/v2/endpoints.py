@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 import base64
 import json
-from typing import Optional
+from typing import Optional, List
 from app.database.connection import get_db
 from app.dependencies import get_face_recognition_service
 from app.services.face_recognition import FaceRecognitionService
@@ -26,12 +26,15 @@ from app.models.schemas import (
     Match
 )
 from app.api.v2.tracker import SimpleFaceTracker
+from app.api.v2.face_seen_tracker import MatchTimeTracker
 
 import logging
 
 router = APIRouter()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+face_seen_tracker = MatchTimeTracker()
 
 
 class ConnectionManager:
@@ -73,8 +76,10 @@ async def embed_face(
 ):
 
     # Validate that the uploaded file is an image
-    validate_image_file(image)
-
+    try:
+        validate_image_file(image)
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"message": str(e)})
     try:
         image_data = await image.read()
 
@@ -173,6 +178,18 @@ async def seed_face(
             status_code=500, detail=f"Failed to save embedding: {str(e)}")
 
     return response.dict()
+
+
+@router.post("/mark-greeted")
+async def mark_greeted(
+    person_ids: List[str] = Form(...),
+    db=Depends(get_db),
+    face_service: FaceRecognitionService = Depends(get_face_recognition_service),
+):
+    for person_id in person_ids:
+        face_seen_tracker.mark_greeted(person_id)
+
+    return {"status": "success", "marked_greeted": person_ids}
 
 
 @router.post("/update", response_model=str)
@@ -278,7 +295,9 @@ async def identify_faces_ws(
 
                 # Now update tracker with current frame's matches
                 tracker.update_tracks(matches)
-
+                # Update last seen data with current frame's matches
+                face_seen_tracker.update(matches)
+                new_faces = face_seen_tracker.get_new_faces()
                 # Combine results - this is where we use tracking to fill in Unknowns
                 final_matches = []
                 used_track_ids = set()
@@ -326,6 +345,7 @@ async def identify_faces_ws(
                     tracked=only_tracked_ids,
                     # lip_center=speaker_location["centroid"] if speaker_location["is_trustworthy"] else [],
                     lip_center=speaker_location["centroid"],
+                    new_faces=new_faces,
                     status="success"
                 ).dict()
 
