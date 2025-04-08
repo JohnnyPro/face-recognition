@@ -1,5 +1,6 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends, Form, File, UploadFile, HTTPException
 from fastapi.responses import JSONResponse
+from fastapi.websockets import WebSocketState
 import cv2
 import numpy as np
 import base64
@@ -46,10 +47,18 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
 
     async def send_json(self, websocket: WebSocket, message: dict):
-        await websocket.send_json(message)
+        try:
+            if websocket.client_state == WebSocketState.CONNECTED:
+                await websocket.send_json(message)
+            else:
+                logger.info(websocket.client_state)
+                logger.warning("Attempted to send to a closed WebSocket, skipping send")
+        except Exception as e:
+            logger.error(f"Failed to send JSON message: {e}")
 
 
 manager = ConnectionManager()
@@ -66,7 +75,7 @@ async def process_image_frame(image_data: bytes, db, face_service):
     return frame
 
 
-@router.post("/embed", response_model=str)
+@router.post("/embed")
 async def embed_face(
     person_id: str = Form(...),
     image: UploadFile = File(...),
@@ -75,46 +84,85 @@ async def embed_face(
         get_face_recognition_service)
 ):
 
-    # Validate that the uploaded file is an image
     try:
+        # Validate that the uploaded file is an image
         validate_image_file(image)
     except Exception as e:
-        return JSONResponse(status_code=400, content={"message": str(e)})
+        logger.error(f"Image validation failed for {image.filename}: {str(e)}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(e)}
+        )
+    embedding = None
     try:
         image_data = await image.read()
-
         image_array = np.frombuffer(image_data, np.uint8)
-
         decoded_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
         if decoded_image is None:
-            raise HTTPException(
-                status_code=400, detail="Could not decode image.")
+            logger.error(f"Could not decode image file: {image.filename}")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error",
+                         "message": "Could not decode image."}
+            )
+
         embedding = face_service.embed(decoded_image)
-    except HTTPException as e:
-        raise e
+
+    # Catch specific exceptions from the service if needed, otherwise general Exception
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error generating embedding: {str(e)}")
+        logger.error(f"Error generating embedding for {person_id}: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error",
+                     "message": f"Error generating embedding: {str(e)}"}
+        )
+
+    if embedding is None or not embedding:
+        logger.warning(
+            f"No face detected or embedding could not be generated for Person ID: {person_id}, Image: {image.filename}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error",
+                     "message": "No face detected or embedding could not be generated from the provided image."}
+        )
 
     try:
-        if (embedding):
-            if (has_embedding_conflict(db, person_id, embedding)):
-                logger.error(
-                    f"Embedding Conflict detected for Person ID: {person_id}")
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "detail": f"Face embedding conflicts with existing entry for person: {person_id}"}
-                )
-            save_embedding(db, person_id, embedding)
+        if has_embedding_conflict(db, person_id, embedding):
+            logger.error(
+                f"Embedding Conflict detected for Person ID: {person_id}")
+            return JSONResponse(
+                status_code=409,  # Conflict
+                content={
+                    "status": "conflict",
+                    "message": f"Face embedding conflicts with an existing entry."
+                }
+            )
+
+        # If no conflict, save the embedding
+        save_embedding(db, person_id, embedding)
+        logger.info(f"Successfully saved embedding for Person ID: {person_id}")
+
+        return JSONResponse(
+            status_code=201,
+            content={
+                "status": "success",
+                "message": f"Embedding saved successfully for person ID: {person_id}",
+                "person_id": person_id
+            }
+        )
+
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save embedding: {str(e)}")
+        logger.error(
+            f"Failed to check conflict or save embedding for {person_id}: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error",
+                     "message": f"Failed to save embedding or check for conflicts: {str(e)}"}
+        )
 
-    return person_id if embedding else "Unknown"
 
-
-@router.post("/seed", response_model=SeedResponse)
+@router.post("/seed")
 async def seed_face(
     person_id: str = Form(...),
     image: UploadFile = File(...),
@@ -123,76 +171,141 @@ async def seed_face(
         get_face_recognition_service)
 ):
 
-    # Validate that the uploaded file is an image
-    validate_image_file(image)
+    
+    try:
+        validate_image_file(image)
+    except Exception as e:
+        logger.error(f"Image validation failed for {image.filename}: {str(e)}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error",
+                     "message": f"Invalid image file: {str(e)}"}
+        )
 
+    embedding = None
     try:
         image_data = await image.read()
-
         image_array = np.frombuffer(image_data, np.uint8)
-
         decoded_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
         if decoded_image is None:
-            raise HTTPException(
-                status_code=400, detail="Could not decode image.")
+            logger.error(f"Could not decode image file: {image.filename}")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error",
+                         "message": "Could not decode image."}
+            )
+
         embedding = face_service.embed_static(decoded_image)
-    except HTTPException as e:
-        raise e
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error generating embedding: {str(e)}")
 
-    response = None
+    except Exception as e:
+        logger.error(
+            f"Error generating static embedding for seeding {person_id}: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={"status": "error",
+                     "message": f"Error generating embedding: {str(e)}"}
+        )
+
+    # 3. Check if embedding was generated successfully
+    if embedding is None or not embedding:
+        logger.warning(
+            f"No face detected or static embedding could not be generated during seeding for Person ID: {person_id}, Image: {image.filename}")
+        return JSONResponse(
+            status_code=400,  # Bad Request
+            content={"status": "error",
+                     "message": "No face detected or embedding could not be generated from the provided image for seeding."}
+        )
+
     try:
-        if embedding:
-            if is_duplicate_seed(db, person_id, embedding):
-                response = SeedResponse(
-                    status="failed",
-                    error=409,
-                    already_seeded=True,
-                    person_id=person_id,
-                    message="Person already seeded.",
-                )
-            elif has_embedding_conflict(db, person_id, embedding):
-                logger.info(f"Updating embedding for Person ID: {person_id}")
-                update_embedding(db, person_id, embedding)
-                response = SeedResponse(
-                    status="success",
-                    already_seeded=False,
-                    person_id=person_id,
-                    message="Updated existing embedding.",
-                )
-            else:
-                logger.info(
-                    f"Creating new embedding for Person ID: {person_id}")
-                save_embedding(db, person_id, embedding)
-                response = SeedResponse(
-                    status="success",
-                    already_seeded=False,
-                    person_id=person_id,
-                    message="Created embedding.",
-                )
-    except Exception as e:
-        logger.info(e)
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save embedding: {str(e)}")
+        if is_duplicate_seed(db, person_id, embedding):
+            logger.warning(
+                f"Duplicate seed detected for Person ID: {person_id}")
+            response_content = SeedResponse(
+                status="failed",
+                error=409,
+                already_seeded=True,
+                person_id=person_id,
+                message="Duplicate seed detected. Person already seeded with a similar face.",
+            )
 
-    return response.dict()
+            return JSONResponse(
+                status_code=409,
+                content=response_content.dict()
+            )
+
+        elif has_embedding_conflict(db, person_id, embedding):
+            logger.info(
+                f"Updating embedding for Person ID: {person_id}")
+            update_embedding(db, person_id, embedding)
+            response_content = SeedResponse(
+                status="success",
+                already_seeded=False,
+                person_id=person_id,
+                message="Updated existing embedding.",
+            )
+            return JSONResponse(
+                status_code=200,
+                content=response_content.dict()
+            )
+
+        else:
+            logger.info(
+                f"Creating new seed embedding for Person ID: {person_id}")
+            save_embedding(db, person_id, embedding)
+            response_content = SeedResponse(
+                status="success",
+                already_seeded=False,
+                person_id=person_id,
+                message="Created new seed embedding.",
+            )
+
+            return JSONResponse(
+                status_code=201,
+                content=response_content.dict()
+            )
+
+    except Exception as e:
+        # Catch errors specifically from the database/seeding logic part
+        # (is_duplicate_seed, has_embedding_conflict, update_embedding, save_embedding)
+        logger.error(
+            f"Failed during seeding database operation for {person_id}: {str(e)}")
+        
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error",
+                     "message": f"Failed to process seed request due to database or internal error: {str(e)}"}
+        )
+
+    logger.error(
+        f"Reached unexpected end of seeding function for Person ID: {person_id}")
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error",
+                 "message": "An unexpected server error occurred during seeding."}
+    )
 
 
 @router.post("/mark-greeted")
 async def mark_greeted(
     person_ids: List[str] = Form(...),
     db=Depends(get_db),
-    face_service: FaceRecognitionService = Depends(get_face_recognition_service),
+    face_service: FaceRecognitionService = Depends(
+        get_face_recognition_service),
 ):
-    for person_id in person_ids:
-        face_seen_tracker.mark_greeted(person_id)
+    try:
+        for person_id in person_ids:
+            face_seen_tracker.mark_greeted(person_id)
 
-    return {"status": "success", "marked_greeted": person_ids}
+        return {"status_code": 200, "status": "success", "marked_greeted": person_ids}
+    except Exception as e:
+        logger.error(
+            f"Error marking greeted for persons: {person_ids}. Error: {str(e)}")
+        return {"status_code": 500, "status": "error", "message": str(e)}
 
 
-@router.post("/update", response_model=str)
+
+@router.post("/update")
 async def update_face(
     person_id: str = Form(...),
     image: UploadFile = File(...),
@@ -201,34 +314,69 @@ async def update_face(
         get_face_recognition_service)
 ):
 
-    # Validate that the uploaded file is an image
-    validate_image_file(image)
+    try:
+        validate_image_file(image)
+    except Exception as e:
+        logger.error(f"Image validation failed for {image.filename}: {str(e)}")
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": f"Invalid image file: {str(e)}"}
+        )
 
+    embedding = None
     try:
         image_data = await image.read()
-
         image_array = np.frombuffer(image_data, np.uint8)
-
         decoded_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
         if decoded_image is None:
-            raise HTTPException(
-                status_code=400, detail="Could not decode image.")
+            logger.error(f"Could not decode image file: {image.filename}")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Could not decode image."}
+            )
+
         embedding = face_service.embed(decoded_image)
-    except HTTPException as e:
-        raise e
+
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error generating embedding: {str(e)}")
+        logger.error(f"Error generating embedding for update, Person ID {person_id}: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={"status": "error", "message": f"Error generating embedding: {str(e)}"}
+        )
+
+    if embedding is None or not embedding:
+         logger.warning(f"No face detected or embedding could not be generated for update, Person ID: {person_id}, Image: {image.filename}")
+         return JSONResponse(
+             status_code=400,
+             content={"status": "error", "message": "No face detected or embedding could not be generated from the provided image for update."}
+         )
 
     try:
-        if (embedding):
-            update_embedding(db, person_id, embedding)
+        update_embedding(db, person_id, embedding)
+        logger.info(f"Successfully updated embedding for Person ID: {person_id}")
+
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "success",
+                "message": f"Embedding updated successfully for person ID: {person_id}",
+                "person_id": person_id
+            }
+        )
+
     except Exception as e:
-        raise HTTPException(
-            status_code=500, detail=f"Failed to save embedding: {str(e)}")
+        logger.error(f"Failed to update embedding for {person_id}: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"Failed to update embedding: {str(e)}"}
+        )
 
-    return person_id if embedding else "Unknown"
-
+    logger.error(f"Reached unexpected end of update function for Person ID: {person_id}")
+    return JSONResponse(
+        status_code=500,
+        content={"status": "error", "message": "An unexpected server error occurred during update."}
+    )
 
 @router.websocket("/identify")
 async def identify_faces_ws(
@@ -245,19 +393,18 @@ async def identify_faces_ws(
 
     try:
         while True:
+            if websocket.client_state == WebSocketState.DISCONNECTED:
+                break
+            elif websocket.client_state == WebSocketState.CONNECTING:
+                continue
+            
             data = await websocket.receive()
 
             try:
                 speaker_location = face_service.get_speaker_location()
-                if speaker_location:
-                    pass
-                    # print(f"Probable speaker at: {speaker_location}")
             except Exception as e:
-                await manager.send_json(websocket, {
-                    "status": "error",
-                    "error": f"Connection error: {str(e)}"
-                })
-                manager.disconnect(websocket)
+                speaker_location = None
+                logger.info("Speaker Location retrieval failed")
             # Handle configuration message
             if "text" in data:
                 message = json.loads(data["text"])
@@ -273,8 +420,22 @@ async def identify_faces_ws(
                     continue
 
                 image_bytes = base64.b64decode(message["image"])
-            else:
+            
+            elif "bytes" in data:
                 image_bytes = data["bytes"]
+            else:
+                # Neither 'text' nor 'bytes' found - unexpected format
+                logger.warning(f"Received unexpected WebSocket data format: {data.keys()}")
+                try:
+                    await manager.send_json(websocket, {"status": "error", "error": "Unsupported data format received."})
+                except Exception as send_error:
+                    logger.error(f"Failed to send unsupported format error to client: {send_error}")
+                continue
+
+            if image_bytes is None:
+                await manager.send_json(websocket, {"status": "error", "error": "No image data provided"})
+                continue
+
 
             try:
                 frame = await process_image_frame(image_bytes, db, face_service)
@@ -344,7 +505,7 @@ async def identify_faces_ws(
                     processed_faces=len(identified_faces),
                     tracked=only_tracked_ids,
                     # lip_center=speaker_location["centroid"] if speaker_location["is_trustworthy"] else [],
-                    lip_center=speaker_location["centroid"],
+                    lip_center=speaker_location["centroid"] if speaker_location else [],
                     new_faces=new_faces,
                     status="success"
                 ).dict()
@@ -358,60 +519,66 @@ async def identify_faces_ws(
                 })
 
     except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
         manager.disconnect(websocket)
     except Exception as e:
+        logger.info("Unexpected error that's not disconnect")
         await manager.send_json(websocket, {
             "status": "error",
             "error": f"Connection error: {str(e)}"
         })
         manager.disconnect(websocket)
-
-
-@router.websocket("/identify/single")
-async def identify_single_face_ws(
-    websocket: WebSocket,
-    db=Depends(get_db),
-    face_service: FaceRecognitionService = Depends(
-        get_face_recognition_service)
-):
-    await manager.connect(websocket)
-
-    try:
-        while True:
-            data = await websocket.receive()
-
-            if "text" in data:
-                message = json.loads(data["text"])
-                if message.get("action") == "close":
-                    break
-
-                image_bytes = base64.b64decode(message["image"])
-            else:
-                image_bytes = data["bytes"]
-
-            try:
-                frame = await process_image_frame(image_bytes, db, face_service)
-                identified_face = face_service.identifySingleFace(frame)
-                match = find_closest_match_single_face(
-                    db, identified_face) if identified_face is not None else None
-
-                response = IdentifyResponseV2(matches=[match] if match else [],
-                                              face_detected=match is not None,
-                                              processed_faces=1,
-                                              status="success").dict()
-                await manager.send_json(websocket, response)
-
-            except Exception as e:
-                await manager.send_json(websocket, {
-                    "status": "error",
-                    "error": str(e)
-                })
-
-    except WebSocketDisconnect:
+    
+    finally:
         manager.disconnect(websocket)
-    except Exception as e:
-        await manager.send_json(websocket, {
-            "status": "error",
-            "error": f"Connection error: {str(e)}"
-        })
-        manager.disconnect(websocket)
+
+
+
+# @router.websocket("/identify/single")
+# async def identify_single_face_ws(
+#     websocket: WebSocket,
+#     db=Depends(get_db),
+#     face_service: FaceRecognitionService = Depends(
+#         get_face_recognition_service)
+# ):
+#     await manager.connect(websocket)
+
+#     try:
+#         while True:
+#             data = await websocket.receive()
+
+#             if "text" in data:
+#                 message = json.loads(data["text"])
+#                 if message.get("action") == "close":
+#                     break
+
+#                 image_bytes = base64.b64decode(message["image"])
+#             else:
+#                 image_bytes = data["bytes"]
+
+#             try:
+#                 frame = await process_image_frame(image_bytes, db, face_service)
+#                 identified_face = face_service.identifySingleFace(frame)
+#                 match = find_closest_match_single_face(
+#                     db, identified_face) if identified_face is not None else None
+
+#                 response = IdentifyResponseV2(matches=[match] if match else [],
+#                                               face_detected=match is not None,
+#                                               processed_faces=1,
+#                                               status="success").dict()
+#                 await manager.send_json(websocket, response)
+
+#             except Exception as e:
+#                 await manager.send_json(websocket, {
+#                     "status": "error",
+#                     "error": str(e)
+#                 })
+
+#     except WebSocketDisconnect:
+#         manager.disconnect(websocket)
+#     except Exception as e:
+#         await manager.send_json(websocket, {
+#             "status": "error",
+#             "error": f"Connection error: {str(e)}"
+#         })
+#         manager.disconnect(websocket)
