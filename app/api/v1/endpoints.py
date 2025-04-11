@@ -24,6 +24,7 @@ async def embed_face(
 ):
 
     # Validate that the uploaded file is an image
+    # Validate that the uploaded file is an image
     validate_image_file(image)
 
     try:
